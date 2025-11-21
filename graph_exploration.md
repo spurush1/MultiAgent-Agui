@@ -1,4 +1,3 @@
-```
 # Graph Exploration (BOM Agent)
 
 ```mermaid
