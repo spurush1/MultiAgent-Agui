@@ -6,8 +6,8 @@ import os
 from openai import OpenAI
 import json
 
-from .search_tool import get_search_context
 from shared.utils import register_agent
+from shared.tools.search import get_search_tool
 
 app = FastAPI(title="Materials Agent")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -20,6 +20,7 @@ def on_startup():
             "id": "find-material",
             "name": "Find Material Details",
             "description": "Finds details about a car part including OEM status, manufacturer, origin, and average price.",
+            "instructions": "Use this skill when you need to find external market data, suppliers, or specifications for a part that are not in the internal BOM.",
             "inputModes": ["text"],
             "outputModes": ["text", "json"],
             "parameters": {
@@ -59,19 +60,22 @@ class MaterialResponse(BaseModel):
 
 @app.post("/find-material", response_model=MaterialResponse)
 def find_material(request: MaterialRequest):
-    # 1. Search Web
-    context = get_search_context(request.part_name)
+    # Get the configured search tool from Tools Hub
+    search_tool = get_search_tool(os.getenv("SEARCH_PROVIDER", "google"))
+    
+    # 1. Search Web using Tools Hub
+    search_query = f"Find details for car part '{request.part_name}': OEM status, manufacturer, country of origin, and average price."
+    context = search_tool.search(search_query)
+    
     # Extract trace info if available
-    search_query = None
     search_result = None
     if isinstance(context, dict) and "error" not in context:
-        search_query = context.get("query")
         search_result = context.get("result")
     else:
         # Fallback: treat context as raw string
         search_result = context if isinstance(context, str) else None
 
-    # 2. Extract Info using OpenAI
+    # 2. Extract Info using OpenAI with structured output
     prompt = f"""
     You are a Materials Expert. Analyze the following search results for the car part '{request.part_name}':
     
@@ -96,7 +100,7 @@ def find_material(request: MaterialRequest):
     
     try:
         completion = client.chat.completions.create(
-            model="gpt-4o", # or gpt-3.5-turbo
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )

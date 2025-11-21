@@ -31,7 +31,8 @@ def on_startup():
                     "part_name": {"type": "string", "description": "Name of the part (e.g., 'V6 Engine')"}
                 },
                 "required": ["part_name"]
-            }
+            },
+            "instructions": "Use this skill FIRST to get the composition and suppliers of a part. Only if this fails or returns no results should you try other discovery tools."
         }
     ]
     register_agent("bom-agent", 8004, skills)

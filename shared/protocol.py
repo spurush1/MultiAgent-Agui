@@ -15,6 +15,7 @@ class AgentSkill(BaseModel):
     inputModes: List[str] = ["text"] # e.g. "text", "audio"
     outputModes: List[str] = ["text"]
     parameters: Dict[str, Any] # JSON Schema for the skill input
+    instructions: Optional[str] = None # Instructions for the orchestrator on when/how to use this skill
 
 class AgentCapabilities(BaseModel):
     streaming: bool = False

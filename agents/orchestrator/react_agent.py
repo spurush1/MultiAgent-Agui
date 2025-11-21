@@ -26,18 +26,7 @@ def create_dynamic_tool(agent_url: str, tool_name: str, description: str, parame
 
     # 2. Define the function to call
     def func(**kwargs):
-        # Construct the endpoint URL. Assuming a standard /tool-execution or specific endpoint convention?
-        # For this demo, we'll assume the tool name maps to an endpoint path or a generic /execute
-        # Let's assume the agent registered with a specific endpoint for the tool or we map it.
-        # Simplified: POST {agent_url}/{tool_name_kebab_case}
-        
-        # Convert tool_name (e.g. "get_supplier_risk") to url path (e.g. "analyze-risk")
-        # This mapping needs to be robust. For now, we'll rely on the tool name matching the endpoint path logic
-        # or pass the endpoint in the registration.
-        
-        # Let's assume the tool name IS the endpoint path for simplicity in this demo.
         endpoint = f"{agent_url}/{tool_name}"
-        
         try:
             response = requests.post(endpoint, json=kwargs)
             response.raise_for_status()
@@ -57,6 +46,8 @@ def get_react_agent():
     Re-creates the agent executor with the current set of registered tools.
     """
     tools = []
+    tool_instructions = []
+
     for agent_name, agent in registry.agents.items():
         for skill in agent.skills:
             tool = create_dynamic_tool(
@@ -67,25 +58,31 @@ def get_react_agent():
             )
             tools.append(tool)
             
+            # Collect instructions
+            instruction = skill.instructions if skill.instructions else skill.description
+            tool_instructions.append(f"- **{skill.id}**: {instruction}")
+            
     if not tools:
         # Return a dummy agent if no tools yet
         return None
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
+    # Dynamic Strategy Construction
+    strategy_text = "\n".join(tool_instructions)
+    
+    system_prompt = f"""You are a smart Orchestrator Agent for a supply chain system. 
+    
+    Your goal is to answer user questions by routing them to the correct tools.
+    
+    AVAILABLE TOOLS & STRATEGY:
+    {strategy_text}
+    
+    Provide a complete answer based on the user's specific request.
+    """
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a smart Orchestrator Agent for a supply chain system. 
-        
-        Your goal is to answer user questions by routing them to the correct tools.
-        
-        STRATEGY:
-        1. If the user asks about a part's suppliers or composition, FIRST try `get-bom`.
-        2. If `get-bom` returns an error (like 404) or empty results (no suppliers found), YOU MUST try `find-material`.
-        3. `find-material` is capable of searching the web for real-world suppliers and details.
-        4. ONLY use `analyze-risk` if the user explicitly asks for risk analysis, geopolitical data, or supplier evaluation. Do not call it for simple BOM or part lookup queries.
-        
-        Provide a complete answer based on the user's specific request.
-        """),
+        ("system", system_prompt),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
