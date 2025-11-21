@@ -82,9 +82,9 @@ def get_react_agent():
         1. If the user asks about a part's suppliers or composition, FIRST try `get-bom`.
         2. If `get-bom` returns an error (like 404) or empty results (no suppliers found), YOU MUST try `find-material`.
         3. `find-material` is capable of searching the web for real-world suppliers and details.
-        4. Once you have supplier names (from either source), use `analyze-risk` to check their geopolitical risk.
+        4. ONLY use `analyze-risk` if the user explicitly asks for risk analysis, geopolitical data, or supplier evaluation. Do not call it for simple BOM or part lookup queries.
         
-        Always try to provide a complete answer with suppliers and risks if possible.
+        Provide a complete answer based on the user's specific request.
         """),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
