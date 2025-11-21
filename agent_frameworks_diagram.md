@@ -3,10 +3,10 @@
 ```mermaid
 flowchart LR
     subgraph Frontend[Frontend]
-        FE[React UI (Next.js)]
+        FE["React UI (Next.js)"]
     end
     subgraph Orchestrator[Orchestrator]
-        ORCH[FastAPI + LangChain (ReAct Agent)]
+        ORCH["FastAPI + LangChain (ReAct Agent)"]
     end
     subgraph Materials[Materials Agent]
         MAT[FastAPI Service]
