@@ -4,3 +4,4 @@ pydantic
 openai
 pydantic-ai
 google-generativeai
+langfuse

@@ -3,8 +3,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import StructuredTool
 from langchain.pydantic_v1 import BaseModel, Field, create_model
+from langfuse.langchain import CallbackHandler
 import requests
 import json
+import os
 from typing import List, Any
 
 from .registry import registry
@@ -43,51 +45,63 @@ def create_dynamic_tool(agent_url: str, tool_name: str, description: str, parame
 
 def get_react_agent():
     """
-    Re-creates the agent executor with the current set of registered tools.
+    Dynamically constructs a ReAct agent using registered tools and their instructions.
     """
     tools = []
-    tool_instructions = []
-
+    
+    # Build tools from registry
     for agent_name, agent in registry.agents.items():
         for skill in agent.skills:
             tool = create_dynamic_tool(
-                agent.url, 
-                skill.id, # Use ID as the tool name/endpoint suffix
-                skill.description, 
-                skill.parameters
+                agent_url=agent.url,
+                tool_name=skill.id,
+                description=skill.description,
+                parameters=skill.parameters
             )
             tools.append(tool)
-            
-            # Collect instructions
-            instruction = skill.instructions if skill.instructions else skill.description
-            tool_instructions.append(f"- **{skill.id}**: {instruction}")
-            
-    if not tools:
-        # Return a dummy agent if no tools yet
-        return None
+    
+    # Build dynamic system prompt from instructions
+    strategy_instructions = []
+    for agent_name, agent in registry.agents.items():
+        for skill in agent.skills:
+            if hasattr(skill, 'instructions') and skill.instructions:
+                strategy_instructions.append(f"- {skill.instructions}")
+    
+    strategy_section = "\n".join(strategy_instructions) if strategy_instructions else "Use the available tools to answer user questions."
+    
+    system_message = f"""You are a smart Orchestrator Agent for a supply chain system.
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    
-    # Dynamic Strategy Construction
-    strategy_text = "\n".join(tool_instructions)
-    
-    system_prompt = f"""You are a smart Orchestrator Agent for a supply chain system. 
-    
-    Your goal is to answer user questions by routing them to the correct tools.
-    
-    AVAILABLE TOOLS & STRATEGY:
-    {strategy_text}
-    
-    Provide a complete answer based on the user's specific request.
-    """
+Your goal is to answer user questions by routing them to the correct tools.
+
+STRATEGY:
+{strategy_section}
+
+Provide a complete answer based on the user's specific request.
+"""
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
+        ("system", system_message),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
     
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     agent = create_openai_tools_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
+    
+    # Initialize Langfuse callback handler
+    langfuse_handler = None
+    if os.getenv("LANGFUSE_ENABLED", "true").lower() == "true":
+        try:
+            langfuse_handler = CallbackHandler(
+                secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+                public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+                host=os.getenv("LANGFUSE_HOST"),
+            )
+        except Exception as e:
+            print(f"Warning: Could not initialize Langfuse: {e}")
+    
+    # Create executor with Langfuse callback
+    callbacks = [langfuse_handler] if langfuse_handler else []
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, callbacks=callbacks)
     
     return agent_executor

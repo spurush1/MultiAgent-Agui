@@ -4,6 +4,7 @@ from typing import Optional
 import uvicorn
 import os
 from pydantic_ai import Agent, RunContext
+from langfuse import get_client
 
 from shared.utils import register_agent
 from shared.tools.search import get_search_tool, SearchInterface
@@ -78,16 +79,36 @@ async def find_material(request: MaterialRequest):
     # Get the configured search tool (dependency)
     search_tool = get_search_tool(os.getenv("SEARCH_PROVIDER", "google"))
     
-    try:
-        # Run the agent
-        result = await material_agent.run(
-            f"Find details for car part '{request.part_name}': OEM status, manufacturer, country of origin, and average price.",
-            deps=search_tool
-        )
-        return result.output
-    except Exception as e:
-        print(f"Agent Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Initialize Langfuse client
+    langfuse = get_client()
+    
+    # Create trace with context manager
+    with langfuse.start_as_current_observation(
+        as_type="generation",
+        name="find-material",
+        input={"part_name": request.part_name},
+        metadata={"agent": "materials", "provider": os.getenv("SEARCH_PROVIDER", "google")}
+    ) as observation:
+        try:
+            # Run the PydanticAI agent
+            result = await material_agent.run(
+                f"Find details for car part '{request.part_name}': OEM status, manufacturer, country of origin, and average price.",
+                deps=search_tool
+            )
+            
+            # Update observation with output
+            observation.update(output=result.output.dict())
+            
+            # Flush Langfuse to ensure trace is sent
+            langfuse.flush()
+            
+            return result.output
+            
+        except Exception as e:
+            print(f"Agent Error: {e}")
+            observation.update(level="ERROR", status_message=str(e))
+            langfuse.flush()  # Flush even on error
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 def health():

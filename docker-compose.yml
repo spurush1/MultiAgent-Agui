@@ -27,6 +27,149 @@ services:
     networks:
       - agent_network
 
+  # Langfuse for LLM Observability & Prompt Management
+  # Langfuse Services (Official v3 Config)
+  langfuse-db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_db:/var/lib/postgresql/data
+    networks:
+      - agent_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    restart: always
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - agent_network
+    healthcheck:
+      test: [ "CMD", "clickhouse-client", "--query", "SELECT 1" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --requirepass myredissecret
+    networks:
+      - agent_network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "myredissecret", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - minio_data:/data
+    networks:
+      - agent_network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    restart: always
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:clickhouse@clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: myredissecret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      ENCRYPTION_KEY: "73f82d3482682df870df7ca883a2fd35bca5797209a9e1dc9dd05e385ff726e1"
+      SALT: "supersecretsalt123456"
+      TELEMETRY_ENABLED: "false"
+    networks:
+      - agent_network
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    restart: always
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3002:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:clickhouse@clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: myredissecret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      ENCRYPTION_KEY: "73f82d3482682df870df7ca883a2fd35bca5797209a9e1dc9dd05e385ff726e1"
+      SALT: "supersecretsalt123456"
+      NEXTAUTH_SECRET: "supersecretlongstringfornextauth123456"
+      NEXTAUTH_URL: http://localhost:3002
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: "org-123"
+      LANGFUSE_INIT_PROJECT_ID: "123e4567-e89b-12d3-a456-426614174000"
+      LANGFUSE_INIT_USER_EMAIL: "admin@example.com"
+      LANGFUSE_INIT_USER_NAME: "Admin"
+      LANGFUSE_INIT_USER_PASSWORD: "SuperSecretPassword123!"
+    networks:
+      - agent_network
+
   # Agents
   supplier-agent:
     build:
@@ -36,10 +179,14 @@ services:
       - DATABASE_URL=postgresql://user:password@postgres:5432/supplier_db
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - PORT=8001
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=http://langfuse-web:3000
     ports:
       - "8011:8001"
     depends_on:
       - postgres
+      - langfuse-web
     networks:
       - agent_network
 
@@ -51,8 +198,13 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - PORT=8002
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=http://langfuse-web:3000
     ports:
       - "8012:8002"
+    depends_on:
+      - langfuse-web
     networks:
       - agent_network
 
@@ -61,17 +213,21 @@ services:
       context: .
       dockerfile: agents/orchestrator/Dockerfile
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY} # Or Google API Key if using Gemini for routing
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - SUPPLIER_AGENT_URL=http://supplier-agent:8001
       - MATERIALS_AGENT_URL=http://materials-agent:8002
       - BOM_AGENT_URL=http://bom-agent:8004
       - PORT=8003
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=http://langfuse-web:3000
     ports:
       - "8013:8003"
     depends_on:
       - supplier-agent
       - materials-agent
       - bom-agent
+      - langfuse-web
     networks:
       - agent_network
 
@@ -111,3 +267,6 @@ networks:
 volumes:
   postgres_data:
   neo4j_data:
+  langfuse_db:
+  clickhouse_data:
+  minio_data:

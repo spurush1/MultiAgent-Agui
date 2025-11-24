@@ -12,7 +12,7 @@ Use these questions to demonstrate the full capabilities of the multi-agent syst
 
 ## 2. Graph Exploration (BOM Agent)
 **Query:**
-> "Show me the full Bill of Materials for the **V6 Engine**, including all sub-components and their suppliers."
+> "Show me the full Bill of Materials for the **3.5L V6 Engine**, including all sub-components and their suppliers."
 
 **What it demonstrates:**
 - **Graph Querying:** Direct interaction with the Neo4j graph database via the `bom-agent`.
